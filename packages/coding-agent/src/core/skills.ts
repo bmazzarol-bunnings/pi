@@ -455,8 +455,9 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 	}
 
 	if (includeDefaults) {
-		addSkills(loadSkillsFromDirInternal(join(resolvedAgentDir, "skills"), "user", true));
+		// Project skills override user skills with the same name; user skills remain fallback.
 		addSkills(loadSkillsFromDirInternal(resolve(resolvedCwd, CONFIG_DIR_NAME, "skills"), "project", true));
+		addSkills(loadSkillsFromDirInternal(join(resolvedAgentDir, "skills"), "user", true));
 	}
 
 	const userSkillsDir = join(resolvedAgentDir, "skills");

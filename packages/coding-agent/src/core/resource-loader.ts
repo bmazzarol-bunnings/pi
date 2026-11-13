@@ -496,35 +496,44 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const themePaths = this.normalizeExtensionPaths(paths.themePaths ?? []);
 
 		for (const entry of skillPaths) {
+			if (!this.resourceMetadataByPath.has(entry.path)) {
+				this.resourceMetadataByPath.set(entry.path, entry.metadata);
+			}
 			this.extensionSkillSourceInfos.set(entry.path, createSourceInfo(entry.path, entry.metadata));
 		}
 		for (const entry of promptPaths) {
+			if (!this.resourceMetadataByPath.has(entry.path)) {
+				this.resourceMetadataByPath.set(entry.path, entry.metadata);
+			}
 			this.extensionPromptSourceInfos.set(entry.path, createSourceInfo(entry.path, entry.metadata));
 		}
 		for (const entry of themePaths) {
+			if (!this.resourceMetadataByPath.has(entry.path)) {
+				this.resourceMetadataByPath.set(entry.path, entry.metadata);
+			}
 			this.extensionThemeSourceInfos.set(entry.path, createSourceInfo(entry.path, entry.metadata));
 		}
 
 		if (skillPaths.length > 0) {
-			this.lastSkillPaths = this.mergePaths(
-				this.lastSkillPaths,
-				skillPaths.map((entry) => entry.path),
+			this.lastSkillPaths = this.sortPathsByPrecedence(
+				this.mergePaths(this.lastSkillPaths, skillPaths.map((entry) => entry.path)),
+				this.resourceMetadataByPath,
 			);
 			this.updateSkillsFromPaths(this.lastSkillPaths, this.resourceMetadataByPath);
 		}
 
 		if (promptPaths.length > 0) {
-			this.lastPromptPaths = this.mergePaths(
-				this.lastPromptPaths,
-				promptPaths.map((entry) => entry.path),
+			this.lastPromptPaths = this.sortPathsByPrecedence(
+				this.mergePaths(this.lastPromptPaths, promptPaths.map((entry) => entry.path)),
+				this.resourceMetadataByPath,
 			);
 			this.updatePromptsFromPaths(this.lastPromptPaths, this.resourceMetadataByPath);
 		}
 
 		if (themePaths.length > 0) {
-			this.lastThemePaths = this.mergePaths(
-				this.lastThemePaths,
-				themePaths.map((entry) => entry.path),
+			this.lastThemePaths = this.sortPathsByPrecedence(
+				this.mergePaths(this.lastThemePaths, themePaths.map((entry) => entry.path)),
+				this.resourceMetadataByPath,
 			);
 			this.updateThemesFromPaths(this.lastThemePaths, this.resourceMetadataByPath);
 		}
@@ -606,13 +615,14 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const cliEnabledPrompts = getEnabledPaths(cliExtensionPaths.prompts);
 		const cliEnabledThemes = getEnabledPaths(cliExtensionPaths.themes);
 
-		const extensionPaths = (
+		const filteredExtensionPaths = (
 			this.noExtensions ? cliEnabledExtensions : this.mergePaths(cliEnabledExtensions, enabledExtensions)
 		).filter(
 			(path) =>
 				!path.startsWith(BUILTIN_PATH_PREFIX) ||
 				!this.disabledBuiltinExtensions.has(path.slice(BUILTIN_PATH_PREFIX.length)),
 		);
+		const extensionPaths = this.sortPathsByPrecedence(filteredExtensionPaths, metadataByPath);
 
 		const packageWarnings = collectExtensionPackageWarnings(extensionPaths, metadataByPath);
 		const extensionsResult = await this.loadFinalExtensionSet(extensionPaths, preTrustExtensions);
@@ -628,9 +638,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.extensionsResult = this.extensionsOverride ? this.extensionsOverride(extensionsResult) : extensionsResult;
 		this.applyExtensionSourceInfo(this.extensionsResult.extensions, metadataByPath);
 
-		const skillPaths = this.noSkills
+		const unsortedSkillPaths = this.noSkills
 			? this.mergePaths(cliEnabledSkills, this.additionalSkillPaths)
 			: this.mergePaths([...cliEnabledSkills, ...enabledSkills], this.additionalSkillPaths);
+		const skillPaths = this.sortPathsByPrecedence(unsortedSkillPaths, metadataByPath);
 
 		this.lastSkillPaths = skillPaths;
 		this.updateSkillsFromPaths(skillPaths, metadataByPath);
@@ -643,9 +654,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 			}
 		}
 
-		const promptPaths = this.noPromptTemplates
+		const unsortedPromptPaths = this.noPromptTemplates
 			? this.mergePaths(cliEnabledPrompts, this.additionalPromptTemplatePaths)
 			: this.mergePaths([...cliEnabledPrompts, ...enabledPrompts], this.additionalPromptTemplatePaths);
+		const promptPaths = this.sortPathsByPrecedence(unsortedPromptPaths, metadataByPath);
 
 		this.lastPromptPaths = promptPaths;
 		this.updatePromptsFromPaths(promptPaths, metadataByPath);
@@ -662,9 +674,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 			}
 		}
 
-		const themePaths = this.noThemes
+		const unsortedThemePaths = this.noThemes
 			? this.mergePaths(cliEnabledThemes, this.additionalThemePaths)
 			: this.mergePaths([...cliEnabledThemes, ...enabledThemes], this.additionalThemePaths);
+		const themePaths = this.sortPathsByPrecedence(unsortedThemePaths, metadataByPath);
 
 		this.lastThemePaths = themePaths;
 		this.updateThemesFromPaths(themePaths, metadataByPath);
@@ -1066,6 +1079,34 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 
 		return merged;
+	}
+
+	/**
+	 * Precedence rank for a resolved resource path. Lower rank loads earlier; loaders are
+	 * first-wins on name collisions, so earlier paths override later ones. Local sources
+	 * load before global: project (0) < temporary/session (1) < user (2). Built-ins always
+	 * load last (4) so user/project extensions can replace them.
+	 */
+	private resourcePrecedenceRank(metadata: PathMetadata | undefined): number {
+		if (!metadata) return 2;
+		if (metadata.source === "builtin") return 4;
+		switch (metadata.scope) {
+			case "project":
+				return 0;
+			case "temporary":
+				return 1;
+			case "user":
+			default:
+				return 2;
+		}
+	}
+
+	/** Stable-sort resource paths by precedence so local/project sources load before global/user ones. */
+	private sortPathsByPrecedence(paths: string[], metadataByPath: Map<string, PathMetadata>): string[] {
+		return [...paths].sort(
+			(a, b) =>
+				this.resourcePrecedenceRank(metadataByPath.get(a)) - this.resourcePrecedenceRank(metadataByPath.get(b)),
+		);
 	}
 
 	private resolveResourcePath(p: string): string {

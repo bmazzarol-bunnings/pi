@@ -30,6 +30,60 @@ describe("DefaultResourceLoader", () => {
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
+	describe("resource precedence (local before global)", () => {
+		function writeSkill(dir: string, name: string, description: string): string {
+			const file = join(dir, name, "SKILL.md");
+			mkdirSync(join(dir, name), { recursive: true });
+			writeFileSync(file, `---\nname: ${name}\ndescription: ${description}\n---\n`);
+			return file;
+		}
+
+		it("extension-discovered local skill beats global user skill on name collision", async () => {
+			// Global user skills (auto-discovered from agentDir/skills, scope: "user").
+			const userShared = writeSkill(join(agentDir, "skills"), "shared", "User version");
+			writeSkill(join(agentDir, "skills"), "user-only", "User fallback");
+
+			// Local project skill discovered by an extension (e.g. .github/skills), scope: "temporary".
+			const localSkillDir = join(cwd, ".github", "skills");
+			const localShared = writeSkill(localSkillDir, "shared", "Project version");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			await loader.reload();
+
+			// Before extension discovery, the user version wins.
+			expect(loader.getSkills().skills.find((s) => s.name === "shared")?.filePath).toBe(userShared);
+
+			// Simulate the copilot-skill-paths extension emitting its local skills dir.
+			loader.extendResources({
+				skillPaths: [
+					{
+						path: localSkillDir,
+						metadata: { source: "extension", scope: "temporary", origin: "top-level" },
+					},
+				],
+			});
+
+			const skills = loader.getSkills().skills;
+			const shared = skills.find((s) => s.name === "shared");
+			expect(shared?.filePath).toBe(localShared);
+			expect(shared?.description).toBe("Project version");
+			// Non-colliding global skill is retained.
+			expect(skills.some((s) => s.name === "user-only")).toBe(true);
+		});
+
+		it("auto-discovered project skill beats global user skill on name collision", async () => {
+			writeSkill(join(agentDir, "skills"), "shared", "User version");
+			const projectShared = writeSkill(join(cwd, ".pi", "skills"), "shared", "Project version");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			await loader.reload();
+
+			const shared = loader.getSkills().skills.find((s) => s.name === "shared");
+			expect(shared?.filePath).toBe(projectShared);
+			expect(shared?.description).toBe("Project version");
+		});
+	});
+
 	describe("reload", () => {
 		it("should initialize with empty results before reload", () => {
 			const loader = new DefaultResourceLoader({ cwd, agentDir });

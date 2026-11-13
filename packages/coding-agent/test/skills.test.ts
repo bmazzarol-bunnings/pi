@@ -1,5 +1,6 @@
-import { homedir } from "os";
-import { join, resolve } from "path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { homedir, tmpdir } from "os";
+import { dirname, join, resolve } from "path";
 import { describe, expect, it } from "vitest";
 import type { ResourceDiagnostic } from "../src/core/diagnostics.ts";
 import { formatSkillsForPrompt, loadSkills, loadSkillsFromDir, type Skill } from "../src/core/skills.ts";
@@ -348,6 +349,46 @@ describe("skills", () => {
 	describe("loadSkills with options", () => {
 		const emptyAgentDir = resolve(__dirname, "fixtures/empty-agent");
 		const emptyCwd = resolve(__dirname, "fixtures/empty-cwd");
+
+		it("should prefer project skills over user skills and retain user-only skills", () => {
+			const tempDir = mkdtempSync(join(tmpdir(), "pi-skill-precedence-"));
+			try {
+				const agentDir = join(tempDir, "agent");
+				const cwd = join(tempDir, "project");
+				const projectSkillPath = join(cwd, ".pi", "skills", "shared", "SKILL.md");
+				const userSkillPath = join(agentDir, "skills", "shared", "SKILL.md");
+				const userOnlySkillPath = join(agentDir, "skills", "user-only", "SKILL.md");
+
+				for (const [filePath, name, description] of [
+					[projectSkillPath, "shared", "Project version"],
+					[userSkillPath, "shared", "User version"],
+					[userOnlySkillPath, "user-only", "User fallback"],
+				]) {
+					mkdirSync(dirname(filePath), { recursive: true });
+					writeFileSync(filePath, `---\nname: ${name}\ndescription: ${description}\n---\n`);
+				}
+
+				const { skills, diagnostics } = loadSkills({
+					agentDir,
+					cwd,
+					skillPaths: [],
+					includeDefaults: true,
+				});
+
+				expect(skills.find((skill) => skill.name === "shared")?.filePath).toBe(projectSkillPath);
+				expect(skills.find((skill) => skill.name === "shared")?.description).toBe("Project version");
+				expect(skills.some((skill) => skill.name === "user-only" && skill.filePath === userOnlySkillPath)).toBe(
+					true,
+				);
+				expect(
+					diagnostics.find(
+						(diagnostic) => diagnostic.type === "collision" && diagnostic.collision?.name === "shared",
+					)?.collision,
+				).toMatchObject({ winnerPath: projectSkillPath, loserPath: userSkillPath });
+			} finally {
+				rmSync(tempDir, { recursive: true, force: true });
+			}
+		});
 
 		it("should load from explicit skillPaths", () => {
 			const { skills, diagnostics } = loadSkills({
