@@ -3258,6 +3258,16 @@ export class InteractiveMode {
 		this.defaultEditor.onPasteImage = () => {
 			void this.handleClipboardPaste();
 		};
+		// Windows Terminal sends an empty bracketed paste (or only a leaked paste-key release)
+		// when the clipboard holds an image. Probe files/images only - never text, because a
+		// text clipboard paste already arrives as a non-empty bracketed paste.
+		this.defaultEditor.onPasteHint = () => {
+			const now = Date.now();
+			// An image paste can produce both an empty paste and a key release; ignore rapid re-triggers.
+			if (now - this.lastPasteHintAt < 300) return;
+			this.lastPasteHintAt = now;
+			void this.handleClipboardPaste({ allowText: false });
+		};
 	}
 
 	private async handleRightClickPaste(): Promise<void> {
@@ -3274,7 +3284,10 @@ export class InteractiveMode {
 		}
 	}
 
-	private async handleClipboardPaste(): Promise<void> {
+	/** Last empty-paste / paste-key-release hint that triggered a clipboard probe. */
+	private lastPasteHintAt = 0;
+
+	private async handleClipboardPaste(options?: { allowText?: boolean }): Promise<void> {
 		try {
 			const filePaths = await readClipboardFilePaths();
 			if (filePaths) {
@@ -3306,7 +3319,7 @@ export class InteractiveMode {
 				return;
 			}
 
-			const text = await readClipboardText();
+			const text = options?.allowText === false ? null : await readClipboardText();
 			if (text) {
 				this.editor.insertTextAtCursor?.(text);
 				this.ui.requestRender();

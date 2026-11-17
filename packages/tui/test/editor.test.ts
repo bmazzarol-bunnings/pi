@@ -1837,6 +1837,23 @@ describe("Editor component", () => {
 			assert.strictEqual(editor.isShowingAutocomplete(), false);
 		});
 
+		it("invokes onEmptyPaste for empty bracketed paste (Windows Terminal image hint)", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let emptyPasteCalls = 0;
+			editor.onEmptyPaste = () => {
+				emptyPasteCalls += 1;
+			};
+
+			editor.handleInput("\x1b[200~\x1b[201~");
+			assert.strictEqual(emptyPasteCalls, 1);
+			assert.strictEqual(editor.getText(), "");
+
+			// Non-empty pastes must not trigger the empty-paste hook
+			editor.handleInput("\x1b[200~text\x1b[201~");
+			assert.strictEqual(emptyPasteCalls, 1);
+			assert.strictEqual(editor.getText(), "text");
+		});
+
 		it("decodes CSI-u Ctrl+letter sequences inside bracketed paste (tmux popup)", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 

@@ -20,6 +20,8 @@ export class CustomEditor extends Editor {
 	public onEscape?: () => void;
 	public onCtrlD?: () => void;
 	public onPasteImage?: () => void;
+	/** Paste hint from an empty bracketed paste or a leaked paste-key release (image-only clipboard). */
+	public onPasteHint?: () => void;
 	/** Handler for extension-registered shortcuts. Returns true if handled. */
 	public onExtensionShortcut?: (data: string) => boolean;
 
@@ -27,6 +29,20 @@ export class CustomEditor extends Editor {
 		super(tui, theme, options);
 		this.keybindings = keybindings;
 		this.embedWorkingStatus = options?.embedWorkingStatus ?? false;
+		this.onEmptyPaste = () => this.onPasteHint?.();
+	}
+
+	/**
+	 * Windows Terminal pastes images by swallowing the paste keypress and only leaking its
+	 * key release (Kitty protocol) or an empty bracketed paste, so a release matching the
+	 * clipboard-paste binding is treated as a paste hint as well.
+	 */
+	onKeyRelease(data: string): boolean {
+		if (this.keybindings.matches(data, "app.clipboard.pasteImage")) {
+			this.onPasteHint?.();
+			return true;
+		}
+		return false;
 	}
 
 	setWorkingStatusIndicator(indicator: StatusIndicator | undefined): void {

@@ -374,6 +374,12 @@ export class Editor implements Component, Focusable {
 
 	public onSubmit?: (text: string) => void;
 	public onChange?: (text: string) => void;
+	/**
+	 * Called when a bracketed paste arrives with no content. Windows Terminal sends
+	 * an empty paste when the clipboard holds an image (it has no text to forward),
+	 * so callers can probe the system clipboard for an image to attach.
+	 */
+	public onEmptyPaste?: () => void;
 	public disableSubmit: boolean = false;
 
 	constructor(tui: TUI, theme: EditorTheme, options: EditorOptions = {}) {
@@ -736,6 +742,8 @@ export class Editor implements Component, Focusable {
 				const pasteContent = this.pasteBuffer.substring(0, endIndex);
 				if (pasteContent.length > 0) {
 					this.handlePaste(pasteContent);
+				} else {
+					this.onEmptyPaste?.();
 				}
 				this.isInPaste = false;
 				const remaining = this.pasteBuffer.substring(endIndex + 6);

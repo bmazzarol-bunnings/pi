@@ -77,3 +77,34 @@ describe("CustomEditor selection page keybindings", () => {
 		expect(pastes).toBe(1);
 	});
 });
+
+describe("CustomEditor paste hints (Windows Terminal image paste)", () => {
+	it("treats a paste-key release as a paste hint (WT 1.25+ leaks the release, swallows the press)", () => {
+		const keybindings = new KeybindingsManager({
+			"app.clipboard.pasteImage": "ctrl+v",
+		});
+		setKeybindings(keybindings);
+		const editor = new CustomEditor(new TuiMainScreen(new VirtualTerminal()), defaultEditorTheme, keybindings);
+		let hints = 0;
+		editor.onPasteHint = () => {
+			hints++;
+		};
+
+		// Kitty release event for Ctrl+V: codepoint 118, ctrl modifier (5), release (3)
+		expect(editor.onKeyRelease("\x1b[118;5:3u")).toBe(true);
+		expect(hints).toBe(1);
+
+		// Unrelated releases are not consumed and do not hint
+		expect(editor.onKeyRelease("\x1b[97;1:3u")).toBe(false);
+		expect(hints).toBe(1);
+
+		// An empty bracketed paste (WT <= 1.24) also fires the hint
+		editor.handleInput("\x1b[200~\x1b[201~");
+		expect(hints).toBe(2);
+
+		// A non-empty paste is plain text, not a hint
+		editor.handleInput("\x1b[200~text\x1b[201~");
+		expect(hints).toBe(2);
+		expect(editor.getText()).toBe("text");
+	});
+});

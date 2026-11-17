@@ -135,6 +135,14 @@ export interface Component {
 	wantsKeyRelease?: boolean;
 
 	/**
+	 * Called for key release events (Kitty protocol) when the component does not opt into
+	 * `wantsKeyRelease`. The event is dropped afterwards either way. Return true if consumed.
+	 * Used e.g. for Windows Terminal 1.25+ image paste, which swallows the Ctrl+V press
+	 * but leaks its release.
+	 */
+	onKeyRelease?(data: string): boolean;
+
+	/**
 	 * If true while focused, fullscreen viewport keys (`tui.altScreen.*` scrolling and prompt jumps) go to this
 	 * component instead of scrolling the transcript, as they do for a focused overlay. Default is false.
 	 */
@@ -1153,6 +1161,7 @@ export abstract class TuiBase extends Container implements TUI {
 		if (this.focusedComponent?.handleInput) {
 			// Filter out key release events unless component opts in
 			if (isKeyRelease(data) && !this.focusedComponent.wantsKeyRelease) {
+				this.focusedComponent.onKeyRelease?.(data);
 				return;
 			}
 			this.focusedComponent.handleInput(data);
